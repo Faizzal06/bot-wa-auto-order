@@ -8,6 +8,7 @@ const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = r
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
 const logger = require('../utils/logger');
+const { randomDelay } = require('../utils/helpers');
 const { handleMessage } = require('./messageHandler');
 
 let sock = null;
@@ -92,6 +93,7 @@ async function sendMessageToUser(jid, content) {
     return;
   }
   try {
+    await randomDelay();
     await sock.sendMessage(jid, content);
   } catch (err) {
     logger.error(`Failed to send message to ${jid}:`, err.message);

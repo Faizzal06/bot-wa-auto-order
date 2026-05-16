@@ -70,17 +70,38 @@ function getCategories() {
 }
 
 /**
- * Ambil produk berdasarkan kategori (stok > 0)
+ * Ambil daftar nama produk unik berdasarkan kategori (stok > 0)
  */
-function getProductsByCategory(category) {
+function getUniqueProductsByCategory(category) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT DISTINCT product_name
+    FROM products
+    WHERE category = ? AND stock > 0
+    ORDER BY product_name
+  `);
+  stmt.bind([category]);
+
+  const rows = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject().product_name);
+  }
+  stmt.free();
+  return rows;
+}
+
+/**
+ * Ambil daftar variant berdasarkan kategori dan nama produk (stok > 0)
+ */
+function getVariantsByProduct(category, productName) {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT variant_id, product_name, variant_name, price, stock
     FROM products
-    WHERE category = ? AND stock > 0
-    ORDER BY product_name, price
+    WHERE category = ? AND product_name = ? AND stock > 0
+    ORDER BY price
   `);
-  stmt.bind([category]);
+  stmt.bind([category, productName]);
 
   const rows = [];
   while (stmt.step()) {
@@ -112,12 +133,12 @@ function getProductById(variantId) {
 /**
  * Buat transaksi baru
  */
-function createTransaction({ user_wa, reference, variant_id, product_name, amount, payment_url }) {
+function createTransaction({ user_wa, reference, variant_id, product_name, original_price, amount, payment_url }) {
   const db = getDb();
   db.run(
-    `INSERT INTO transactions (user_wa, reference, variant_id, product_name, amount, status, payment_url)
-     VALUES (?, ?, ?, ?, ?, 'waiting_payment', ?)`,
-    [user_wa, reference, variant_id, product_name, amount, payment_url]
+    `INSERT INTO transactions (user_wa, reference, variant_id, product_name, original_price, amount, status, payment_url)
+     VALUES (?, ?, ?, ?, ?, ?, 'waiting_payment', ?)`,
+    [user_wa, reference, variant_id, product_name, original_price, amount, payment_url]
   );
   saveDatabase();
 }
@@ -202,7 +223,8 @@ module.exports = {
   upsertProduct,
   upsertManyProducts,
   getCategories,
-  getProductsByCategory,
+  getUniqueProductsByCategory,
+  getVariantsByProduct,
   getProductById,
   // Transactions
   createTransaction,

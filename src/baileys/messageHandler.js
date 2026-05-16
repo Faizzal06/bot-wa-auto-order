@@ -18,7 +18,8 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const logger = require('../utils/logger');
-const { formatRupiah, generateReference, jidToPhone } = require('../utils/helpers');
+const { formatRupiah, generateReference, jidToPhone, randomDelay } = require('../utils/helpers');
+const { calculateSellingPrice } = require('../utils/profitRules');
 const models = require('../db/models');
 const uangx = require('../services/uangx');
 
@@ -95,6 +96,7 @@ async function sendInteractiveButtons(sock, jid, { title, body, footer, buttons 
     additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
   }
 
+  await randomDelay();
   await sock.relayMessage(jid, fullMsg.message, {
     messageId: fullMsg.key.id,
     additionalNodes,
@@ -142,6 +144,7 @@ async function sendListMessage(sock, jid, { title, body, footer, buttonText, sec
     additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
   }
 
+  await randomDelay();
   await sock.relayMessage(jid, fullMsg.message, {
     messageId: fullMsg.key.id,
     additionalNodes,
@@ -222,9 +225,10 @@ async function sendMainMenu(sock, jid) {
   const categories = models.getCategories();
 
   if (categories.length === 0) {
-    await sock.sendMessage(jid, {
-      text: '⚠️ Maaf, belum ada produk tersedia saat ini. Silakan coba lagi nanti.',
-    });
+    try {
+      await randomDelay();
+      await sock.sendMessage(jid, { text: '⚠️ Maaf, belum ada produk tersedia saat ini. Silakan coba lagi nanti.' });
+    } catch (e) {}
     return;
   }
 
@@ -254,6 +258,7 @@ async function sendMainMenu(sock, jid) {
       text += `*${i + 1}.* ${cat.category}\n`;
     });
     text += `\nBalas dengan *nomor* untuk memilih.\n📞 Hubungi Admin: wa.me/${ADMIN_PHONE}`;
+    await randomDelay();
     await sock.sendMessage(jid, { text });
   }
 
@@ -264,10 +269,10 @@ async function sendMainMenu(sock, jid) {
 }
 
 /**
- * Kirim daftar produk per kategori
+ * Kirim daftar produk (nama produk unik) per kategori
  */
 async function sendProductList(sock, jid, category) {
-  const products = models.getProductsByCategory(category);
+  const products = models.getUniqueProductsByCategory(category);
 
   if (products.length === 0) {
     await sock.sendMessage(jid, {
@@ -276,15 +281,13 @@ async function sendProductList(sock, jid, category) {
     return sendMainMenu(sock, jid);
   }
 
-  const displayProducts = products.slice(0, 10);
-
   const sections = [{
     title: `📦 Produk ${category}`,
-    rows: displayProducts.map(p => ({
-      header: p.product_name,
-      title: `${p.product_name} - ${p.variant_name}`,
-      id: `prod_${p.variant_id}`,
-      description: formatRupiah(p.price),
+    rows: products.map(productName => ({
+      header: category,
+      title: productName,
+      id: `prod_${productName}`,
+      description: '',
     })),
   }];
 
@@ -292,7 +295,7 @@ async function sendProductList(sock, jid, category) {
     await sendListMessage(sock, jid, {
       title: `Produk ${category}`,
       body: `📦 *Produk ${category}*\nPilih produk yang ingin kamu beli:`,
-      footer: 'Harga sudah termasuk biaya layanan',
+      footer: 'Bot Akun Sharing',
       buttonText: 'Pilih Produk',
       sections,
     });
@@ -300,16 +303,70 @@ async function sendProductList(sock, jid, category) {
     // Fallback text
     logger.warn('List message failed, using text fallback:', err.message);
     let text = `📦 *Produk ${category}*\n\n`;
-    displayProducts.forEach((p, i) => {
-      text += `*${i + 1}.* ${p.product_name} - ${p.variant_name}\n    💰 ${formatRupiah(p.price)}\n`;
+    products.forEach((p, i) => {
+      text += `*${i + 1}.* ${p}\n`;
     });
     text += '\nBalas dengan *nomor* untuk memilih.';
+    await randomDelay();
     await sock.sendMessage(jid, { text });
   }
 
   userStates.set(jid, {
     state: 'SELECTING_PRODUCT',
-    data: { category, products: displayProducts },
+    data: { category, products },
+  });
+}
+
+/**
+ * Kirim daftar variant per produk
+ */
+async function sendVariantList(sock, jid, category, productName) {
+  const variants = models.getVariantsByProduct(category, productName);
+
+  if (variants.length === 0) {
+    await sock.sendMessage(jid, {
+      text: '⚠️ Maaf, varian untuk produk ini sedang kosong.',
+    });
+    return sendProductList(sock, jid, category);
+  }
+
+  const sections = [{
+    title: `🔖 Varian ${productName}`,
+    rows: variants.map(v => {
+      const sellingPrice = calculateSellingPrice(v.price);
+      return {
+        header: productName,
+        title: v.variant_name,
+        id: `var_${v.variant_id}`,
+        description: formatRupiah(sellingPrice),
+      };
+    }),
+  }];
+
+  try {
+    await sendListMessage(sock, jid, {
+      title: `Varian ${productName}`,
+      body: `🔖 *Varian ${productName}*\nPilih durasi/jenis yang ingin kamu beli:`,
+      footer: 'Harga sudah termasuk biaya layanan',
+      buttonText: 'Pilih Varian',
+      sections,
+    });
+  } catch (err) {
+    // Fallback text
+    logger.warn('List message failed, using text fallback:', err.message);
+    let text = `🔖 *Varian ${productName}*\n\n`;
+    variants.forEach((v, i) => {
+      const sellingPrice = calculateSellingPrice(v.price);
+      text += `*${i + 1}.* ${v.variant_name}\n    💰 ${formatRupiah(sellingPrice)}\n`;
+    });
+    text += '\nBalas dengan *nomor* untuk memilih.';
+    await randomDelay();
+    await sock.sendMessage(jid, { text });
+  }
+
+  userStates.set(jid, {
+    state: 'SELECTING_VARIANT',
+    data: { category, productName, variants },
   });
 }
 
@@ -317,10 +374,12 @@ async function sendProductList(sock, jid, category) {
  * Kirim konfirmasi pembelian
  */
 async function sendConfirmation(sock, jid, product) {
+  const sellingPrice = calculateSellingPrice(product.price);
+  
   const confirmText =
     `🛒 *Detail Pesanan:*\n\n` +
     `📌 Produk: *${product.product_name} - ${product.variant_name}*\n` +
-    `💰 Harga: *${formatRupiah(product.price)}*\n\n` +
+    `💰 Harga: *${formatRupiah(sellingPrice)}*\n\n` +
     `Apakah sudah benar?`;
 
   try {
@@ -336,6 +395,7 @@ async function sendConfirmation(sock, jid, product) {
   } catch (err) {
     // Fallback text
     logger.warn('Button message failed, using text fallback:', err.message);
+    await randomDelay();
     await sock.sendMessage(jid, {
       text: confirmText + '\n\nBalas *YA* untuk konfirmasi atau *TIDAK* untuk batal.',
     });
@@ -368,11 +428,12 @@ async function processOrder(sock, jid, msg) {
   const userWa = jid; // Simpan JID asli (bisa @lid atau @s.whatsapp.net)
   const userPhone = jidToPhone(jid);
   const reference = generateReference();
+  const sellingPrice = calculateSellingPrice(product.price);
 
   try {
     // Buat invoice UangX
     const paymentUrl = await uangx.createInvoice(
-      product.price,
+      sellingPrice,
       pushName,
       `${userPhone}@wa.me`,
       reference
@@ -384,16 +445,18 @@ async function processOrder(sock, jid, msg) {
       reference,
       variant_id: product.variant_id,
       product_name: `${product.product_name} - ${product.variant_name}`,
-      amount: product.price,
+      original_price: product.price,
+      amount: sellingPrice,
       payment_url: paymentUrl,
     });
 
     // Kirim link pembayaran ke pelanggan
+    await randomDelay();
     await sock.sendMessage(jid, {
       text:
         `💰 *Invoice Pembayaran*\n\n` +
         `📌 Produk: *${product.product_name} - ${product.variant_name}*\n` +
-        `💵 Total: *${formatRupiah(product.price)}*\n` +
+        `💵 Total: *${formatRupiah(sellingPrice)}*\n` +
         `🔖 Ref: \`${reference}\`\n\n` +
         `Silakan lakukan pembayaran melalui link berikut:\n${paymentUrl}\n\n` +
         `📋 *Instruksi:*\n` +
@@ -404,9 +467,10 @@ async function processOrder(sock, jid, msg) {
     });
 
     userStates.set(jid, { state: 'WAITING_PAYMENT', data: { reference } });
-    logger.info(`Order created: ref=${reference}, user=${userWa}, product=${product.variant_id}, amount=${product.price}`);
+    logger.info(`Order created: ref=${reference}, user=${userWa}, product=${product.variant_id}, amount=${sellingPrice}`);
   } catch (err) {
     logger.error(`processOrder error for ${userWa}:`, err.message);
+    await randomDelay();
     await sock.sendMessage(jid, {
       text: '❌ Maaf, terjadi kesalahan saat membuat invoice. Silakan coba lagi atau hubungi admin.',
     });
@@ -470,6 +534,7 @@ async function handleMessage(sock, msg) {
     if (selectedCategory) {
       return sendProductList(sock, jid, selectedCategory);
     } else {
+      await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
       return;
     }
@@ -477,25 +542,57 @@ async function handleMessage(sock, msg) {
 
   // ─── STATE: SELECTING_PRODUCT ───
   if (currentState === 'SELECTING_PRODUCT') {
-    const products = userState.data.products;
-    let selectedProduct = null;
+    const products = userState.data.products; // array of strings (product_name)
+    const category = userState.data.category;
+    let selectedProductName = null;
 
-    // Dari interactive response: prod_{variant_id}
+    // Dari interactive response: prod_{nama}
     if (text.startsWith('prod_')) {
-      const variantId = parseInt(text.replace('prod_', ''));
-      selectedProduct = products.find(p => p.variant_id === variantId);
+      selectedProductName = text.replace('prod_', '');
     }
     // Dari text biasa: nomor
     else if (/^\d+$/.test(text)) {
       const idx = parseInt(text) - 1;
       if (idx >= 0 && idx < products.length) {
-        selectedProduct = products[idx];
+        selectedProductName = products[idx];
+      }
+    }
+    // Dari text biasa: nama produk
+    else {
+      selectedProductName = products.find(p => p.toLowerCase() === text.toLowerCase());
+    }
+
+    if (selectedProductName) {
+      return sendVariantList(sock, jid, category, selectedProductName);
+    } else {
+      await randomDelay();
+      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
+      return;
+    }
+  }
+
+  // ─── STATE: SELECTING_VARIANT ───
+  if (currentState === 'SELECTING_VARIANT') {
+    const variants = userState.data.variants;
+    let selectedVariant = null;
+
+    // Dari interactive response: var_{variant_id}
+    if (text.startsWith('var_')) {
+      const variantId = parseInt(text.replace('var_', ''));
+      selectedVariant = variants.find(v => v.variant_id === variantId);
+    }
+    // Dari text biasa: nomor
+    else if (/^\d+$/.test(text)) {
+      const idx = parseInt(text) - 1;
+      if (idx >= 0 && idx < variants.length) {
+        selectedVariant = variants[idx];
       }
     }
 
-    if (selectedProduct) {
-      return sendConfirmation(sock, jid, selectedProduct);
+    if (selectedVariant) {
+      return sendConfirmation(sock, jid, selectedVariant);
     } else {
+      await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
       return;
     }
@@ -509,10 +606,12 @@ async function handleMessage(sock, msg) {
     if (isYes) {
       return processOrder(sock, jid, msg);
     } else if (isNo) {
+      await randomDelay();
       await sock.sendMessage(jid, { text: '❌ Pesanan dibatalkan.' });
       userStates.delete(jid);
       return sendMainMenu(sock, jid);
     } else {
+      await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Balas *YA* untuk konfirmasi atau *TIDAK* untuk batal.' });
       return;
     }
@@ -520,6 +619,7 @@ async function handleMessage(sock, msg) {
 
   // ─── STATE: WAITING_PAYMENT ───
   if (currentState === 'WAITING_PAYMENT') {
+    await randomDelay();
     await sock.sendMessage(jid, {
       text: '⏳ Pesanan kamu sedang menunggu pembayaran.\nJika sudah bayar, tunggu konfirmasi otomatis.\n\nKetik *!menu* untuk membuat pesanan baru.',
     });

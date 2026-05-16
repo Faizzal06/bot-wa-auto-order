@@ -56,6 +56,7 @@ async function initDatabase() {
       sekalipay_ref_id    TEXT,
       variant_id          INTEGER,
       product_name        TEXT,
+      original_price      INTEGER DEFAULT 0,
       amount              INTEGER NOT NULL,
       status              TEXT DEFAULT 'waiting_payment',
       payment_url         TEXT,
@@ -70,6 +71,20 @@ async function initDatabase() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_transactions_sekalipay_ref ON transactions(sekalipay_ref_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_transactions_user_wa ON transactions(user_wa)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)`);
+
+  // Migration: Add original_price column if not exists
+  try {
+    const columnsInfo = db.exec("PRAGMA table_info(transactions)");
+    if (columnsInfo && columnsInfo.length > 0) {
+      const columns = columnsInfo[0].values.map(v => v[1]);
+      if (!columns.includes('original_price')) {
+        db.run("ALTER TABLE transactions ADD COLUMN original_price INTEGER DEFAULT 0");
+        logger.info('Migration: added original_price column to transactions');
+      }
+    }
+  } catch (err) {
+    logger.warn('Error during migration for original_price:', err.message);
+  }
 
   saveDatabase();
   logger.info('Database tables initialized');
