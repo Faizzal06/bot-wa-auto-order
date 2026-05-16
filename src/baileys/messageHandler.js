@@ -228,7 +228,7 @@ async function sendMainMenu(sock, jid) {
     try {
       await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Maaf, belum ada produk tersedia saat ini. Silakan coba lagi nanti.' });
-    } catch (e) {}
+    } catch (e) { }
     return;
   }
 
@@ -245,7 +245,7 @@ async function sendMainMenu(sock, jid) {
   try {
     await sendListMessage(sock, jid, {
       title: 'Menu Utama',
-      body: '🎉 *Selamat datang di Bot Akun Sharing!*\nSilakan pilih layanan yang ingin kamu beli:',
+      body: '🎉 *Selamat datang di Udinz Store!*\nSilakan pilih layanan yang ingin kamu beli:',
       footer: '📞 Hubungi Admin: wa.me/' + ADMIN_PHONE,
       buttonText: 'Pilih Layanan',
       sections,
@@ -253,7 +253,7 @@ async function sendMainMenu(sock, jid) {
   } catch (err) {
     // Fallback: kirim sebagai text biasa jika interactive message gagal
     logger.warn('List message failed, using text fallback:', err.message);
-    let text = '🎉 *Selamat datang di Bot Akun Sharing!*\n\nSilakan pilih layanan:\n\n';
+    let text = '🎉 *Selamat datang di Udinz Store!*\n\nSilakan pilih layanan:\n\n';
     categories.forEach((cat, i) => {
       text += `*${i + 1}.* ${cat.category}\n`;
     });
@@ -295,7 +295,7 @@ async function sendProductList(sock, jid, category) {
     await sendListMessage(sock, jid, {
       title: `Produk ${category}`,
       body: `📦 *Produk ${category}*\nPilih produk yang ingin kamu beli:`,
-      footer: 'Bot Akun Sharing',
+      footer: 'Udinz Store',
       buttonText: 'Pilih Produk',
       sections,
     });
@@ -375,7 +375,7 @@ async function sendVariantList(sock, jid, category, productName) {
  */
 async function sendConfirmation(sock, jid, product) {
   const sellingPrice = calculateSellingPrice(product.price);
-  
+
   const confirmText =
     `🛒 *Detail Pesanan:*\n\n` +
     `📌 Produk: *${product.product_name} - ${product.variant_name}*\n` +
@@ -386,7 +386,7 @@ async function sendConfirmation(sock, jid, product) {
     await sendInteractiveButtons(sock, jid, {
       title: 'Konfirmasi Pesanan',
       body: confirmText,
-      footer: 'Bot Akun Sharing',
+      footer: 'Udinz Store',
       buttons: [
         { text: '✅ Ya', id: 'confirm_yes' },
         { text: '❌ Tidak', id: 'confirm_no' },
