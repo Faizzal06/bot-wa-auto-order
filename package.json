@@ -1,0 +1,27 @@
+{
+  "name": "bot-auto-order",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp otomatis untuk penjualan akun sharing (Sekalipay + UangX + Baileys)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "sekalipay",
+    "uangx"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc10",
+    "axios": "^1.7.9",
+    "sql.js": "^1.11.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

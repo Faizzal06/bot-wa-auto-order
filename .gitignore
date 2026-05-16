@@ -1,0 +1,9 @@
+node_modules/
+sessions/
+data/
+logs/
+.env
+example-bot
+prd.md
+sekalipay-api.md
+uangX-api.md
