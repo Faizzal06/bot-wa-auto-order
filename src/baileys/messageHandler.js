@@ -1,20 +1,17 @@
 /**
- * Message Handler – State Machine per User
+ * Message Handler – State Machine per User (Text-Based Navigation)
  *
  * States:
  *   MENU               → tampilkan daftar kategori
  *   SELECTING_CATEGORY  → menunggu pilih kategori
  *   SELECTING_PRODUCT   → menunggu pilih produk
+ *   SELECTING_VARIANT   → menunggu pilih varian
  *   CONFIRMING          → menunggu konfirmasi Ya/Tidak
  *   WAITING_PAYMENT     → link sudah dikirim, reset state
  */
 
 const {
-  proto,
-  generateWAMessageFromContent,
-  normalizeMessageContent,
   isJidGroup,
-  generateMessageIDV2,
 } = require('@whiskeysockets/baileys');
 
 const logger = require('../utils/logger');
@@ -30,135 +27,12 @@ const ADMIN_PHONE = process.env.ADMIN_PHONE || '';
 const userStates = new Map();
 
 // ═══════════════════════════════════════════════════
-// INTERACTIVE MESSAGE HELPERS (Native Flow)
-// ═══════════════════════════════════════════════════
-
-/**
- * Build the correct additionalNodes for relayMessage based on the message content.
- * WhatsApp requires specific binary node structures ("biz", "interactive", "bot")
- * for interactive messages to render properly.
- */
-function getButtonArgs(message) {
-  const nativeFlow = message.interactiveMessage?.nativeFlowMessage;
-  if (nativeFlow || message.buttonsMessage) {
-    return {
-      tag: 'biz',
-      attrs: {},
-      content: [{
-        tag: 'interactive',
-        attrs: { type: 'native_flow', v: '1' },
-        content: [{
-          tag: 'native_flow',
-          attrs: { v: '9', name: 'mixed' },
-        }],
-      }],
-    };
-  }
-  return { tag: 'biz', attrs: {} };
-}
-
-/**
- * Send interactive buttons (quick_reply) using nativeFlowMessage.
- * Works on recent WA versions where old buttonsMessage is deprecated.
- */
-async function sendInteractiveButtons(sock, jid, { title, body, footer, buttons }) {
-  const content = {
-    viewOnceMessage: {
-      message: {
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          ...(title ? { header: proto.Message.InteractiveMessage.Header.create({ title }) } : {}),
-          body: proto.Message.InteractiveMessage.Body.create({ text: body }),
-          ...(footer ? { footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }) } : {}),
-          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-            buttons: buttons.map(btn => ({
-              name: 'quick_reply',
-              buttonParamsJson: JSON.stringify({
-                display_text: btn.text,
-                id: btn.id,
-              }),
-            })),
-          }),
-        }),
-      },
-    },
-  };
-
-  const userJid = sock.authState?.creds?.me?.id || sock.user?.id;
-  const fullMsg = generateWAMessageFromContent(jid, content, {
-    userJid,
-    messageId: generateMessageIDV2(userJid),
-  });
-
-  const normalizedContent = normalizeMessageContent(fullMsg.message);
-  const additionalNodes = [getButtonArgs(normalizedContent)];
-
-  if (!isJidGroup(jid)) {
-    additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
-  }
-
-  await randomDelay();
-  await sock.relayMessage(jid, fullMsg.message, {
-    messageId: fullMsg.key.id,
-    additionalNodes,
-  });
-
-  return fullMsg;
-}
-
-/**
- * Send a list message (single_select) using nativeFlowMessage.
- * The old listMessage format no longer works on recent WA versions.
- */
-async function sendListMessage(sock, jid, { title, body, footer, buttonText, sections }) {
-  const content = {
-    viewOnceMessage: {
-      message: {
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          ...(title ? { header: proto.Message.InteractiveMessage.Header.create({ title }) } : {}),
-          body: proto.Message.InteractiveMessage.Body.create({ text: body }),
-          ...(footer ? { footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }) } : {}),
-          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-            buttons: [{
-              name: 'single_select',
-              buttonParamsJson: JSON.stringify({
-                title: buttonText || 'Pilih',
-                sections,
-              }),
-            }],
-          }),
-        }),
-      },
-    },
-  };
-
-  const userJid = sock.authState?.creds?.me?.id || sock.user?.id;
-  const fullMsg = generateWAMessageFromContent(jid, content, {
-    userJid,
-    messageId: generateMessageIDV2(userJid),
-  });
-
-  const normalizedContent = normalizeMessageContent(fullMsg.message);
-  const additionalNodes = [getButtonArgs(normalizedContent)];
-
-  if (!isJidGroup(jid)) {
-    additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
-  }
-
-  await randomDelay();
-  await sock.relayMessage(jid, fullMsg.message, {
-    messageId: fullMsg.key.id,
-    additionalNodes,
-  });
-
-  return fullMsg;
-}
-
-// ═══════════════════════════════════════════════════
 // MESSAGE CONTENT EXTRACTION
 // ═══════════════════════════════════════════════════
 
 /**
- * Ekstrak teks / ID dari berbagai jenis pesan Baileys
+ * Ekstrak teks dari pesan Baileys.
+ * Kita hanya fokus pada teks karena native flow dihilangkan.
  */
 function extractMessageContent(msg) {
   const message = msg.message;
@@ -172,25 +46,13 @@ function extractMessageContent(msg) {
     return { text: message.extendedTextMessage.text, type: 'text' };
   }
 
-  // List response (user pilih dari list message)
+  // Support untuk response interaktif jika masih ada yang masuk (untuk backward compatibility)
   if (message.listResponseMessage) {
-    return {
-      text: message.listResponseMessage.singleSelectReply?.selectedRowId || '',
-      title: message.listResponseMessage.title,
-      type: 'list_response',
-    };
+    return { text: message.listResponseMessage.singleSelectReply?.selectedRowId || '', type: 'list_response' };
   }
-
-  // Button response (user klik button)
   if (message.buttonsResponseMessage) {
-    return {
-      text: message.buttonsResponseMessage.selectedButtonId || '',
-      title: message.buttonsResponseMessage.selectedDisplayText,
-      type: 'button_response',
-    };
+    return { text: message.buttonsResponseMessage.selectedButtonId || '', type: 'button_response' };
   }
-
-  // Interactive response (native flow / newer WhatsApp versions)
   if (message.interactiveResponseMessage) {
     try {
       const paramsJson = message.interactiveResponseMessage.nativeFlowResponseMessage?.paramsJson;
@@ -203,23 +65,15 @@ function extractMessageContent(msg) {
     }
   }
 
-  // Template button reply
-  if (message.templateButtonReplyMessage) {
-    return {
-      text: message.templateButtonReplyMessage.selectedId || '',
-      type: 'template_response',
-    };
-  }
-
   return null;
 }
 
 // ═══════════════════════════════════════════════════
-// MENU & PRODUCT DISPLAY
+// MENU & PRODUCT DISPLAY (TEXT-BASED)
 // ═══════════════════════════════════════════════════
 
 /**
- * Kirim menu utama (list message kategori)
+ * Kirim menu utama (Teks Daftar Kategori)
  */
 async function sendMainMenu(sock, jid) {
   const categories = models.getCategories();
@@ -232,34 +86,17 @@ async function sendMainMenu(sock, jid) {
     return;
   }
 
-  const sections = [{
-    title: '📋 Kategori Produk',
-    rows: categories.map(cat => ({
-      header: cat.category,
-      title: cat.category,
-      id: `cat_${cat.category}`,
-      description: '',
-    })),
-  }];
+  let text = '🎉 *Selamat datang di Udinz Store!*\n\nSilakan pilih kategori layanan yang ingin kamu beli:\n\n';
+  categories.forEach((cat, i) => {
+    text += `*${i + 1}.* ${cat.category}\n`;
+  });
+  text += `\n👉 *Balas dengan nomor atau nama kategori*\n📞 Hubungi Admin: wa.me/${ADMIN_PHONE}`;
 
   try {
-    await sendListMessage(sock, jid, {
-      title: 'Menu Utama',
-      body: '🎉 *Selamat datang di Udinz Store!*\nSilakan pilih layanan yang ingin kamu beli:',
-      footer: '📞 Hubungi Admin: wa.me/' + ADMIN_PHONE,
-      buttonText: 'Pilih Layanan',
-      sections,
-    });
-  } catch (err) {
-    // Fallback: kirim sebagai text biasa jika interactive message gagal
-    logger.warn('List message failed, using text fallback:', err.message);
-    let text = '🎉 *Selamat datang di Udinz Store!*\n\nSilakan pilih layanan:\n\n';
-    categories.forEach((cat, i) => {
-      text += `*${i + 1}.* ${cat.category}\n`;
-    });
-    text += `\nBalas dengan *nomor* untuk memilih.\n📞 Hubungi Admin: wa.me/${ADMIN_PHONE}`;
     await randomDelay();
     await sock.sendMessage(jid, { text });
+  } catch (err) {
+    logger.error('Failed to send main menu:', err.message);
   }
 
   userStates.set(jid, {
@@ -269,7 +106,7 @@ async function sendMainMenu(sock, jid) {
 }
 
 /**
- * Kirim daftar produk (nama produk unik) per kategori
+ * Kirim daftar produk (Teks Daftar Produk) per kategori
  */
 async function sendProductList(sock, jid, category) {
   const products = models.getUniqueProductsByCategory(category);
@@ -281,34 +118,17 @@ async function sendProductList(sock, jid, category) {
     return sendMainMenu(sock, jid);
   }
 
-  const sections = [{
-    title: `📦 Produk ${category}`,
-    rows: products.map(productName => ({
-      header: category,
-      title: productName,
-      id: `prod_${productName}`,
-      description: '',
-    })),
-  }];
+  let text = `📦 *Produk ${category}*\n\nSilakan pilih produk yang ingin kamu beli:\n\n`;
+  products.forEach((p, i) => {
+    text += `*${i + 1}.* ${p}\n`;
+  });
+  text += `\n👉 *Balas dengan nomor atau nama produk*`;
 
   try {
-    await sendListMessage(sock, jid, {
-      title: `Produk ${category}`,
-      body: `📦 *Produk ${category}*\nPilih produk yang ingin kamu beli:`,
-      footer: 'Udinz Store',
-      buttonText: 'Pilih Produk',
-      sections,
-    });
-  } catch (err) {
-    // Fallback text
-    logger.warn('List message failed, using text fallback:', err.message);
-    let text = `📦 *Produk ${category}*\n\n`;
-    products.forEach((p, i) => {
-      text += `*${i + 1}.* ${p}\n`;
-    });
-    text += '\nBalas dengan *nomor* untuk memilih.';
     await randomDelay();
     await sock.sendMessage(jid, { text });
+  } catch (err) {
+    logger.error('Failed to send product list:', err.message);
   }
 
   userStates.set(jid, {
@@ -318,7 +138,7 @@ async function sendProductList(sock, jid, category) {
 }
 
 /**
- * Kirim daftar variant per produk
+ * Kirim daftar variant per produk (Teks Daftar Varian)
  */
 async function sendVariantList(sock, jid, category, productName) {
   const variants = models.getVariantsByProduct(category, productName);
@@ -330,38 +150,18 @@ async function sendVariantList(sock, jid, category, productName) {
     return sendProductList(sock, jid, category);
   }
 
-  const sections = [{
-    title: `🔖 Varian ${productName}`,
-    rows: variants.map(v => {
-      const sellingPrice = calculateSellingPrice(v.price);
-      return {
-        header: productName,
-        title: v.variant_name,
-        id: `var_${v.variant_id}`,
-        description: formatRupiah(sellingPrice),
-      };
-    }),
-  }];
+  let text = `🔖 *Varian ${productName}*\n\nPilih durasi/jenis yang ingin kamu beli:\n\n`;
+  variants.forEach((v, i) => {
+    const sellingPrice = calculateSellingPrice(v.price);
+    text += `*${i + 1}.* ${v.variant_name} 💰 ${formatRupiah(sellingPrice)}\n`;
+  });
+  text += `\n👉 *Balas dengan nomor varian*`;
 
   try {
-    await sendListMessage(sock, jid, {
-      title: `Varian ${productName}`,
-      body: `🔖 *Varian ${productName}*\nPilih durasi/jenis yang ingin kamu beli:`,
-      footer: 'Harga sudah termasuk biaya layanan',
-      buttonText: 'Pilih Varian',
-      sections,
-    });
-  } catch (err) {
-    // Fallback text
-    logger.warn('List message failed, using text fallback:', err.message);
-    let text = `🔖 *Varian ${productName}*\n\n`;
-    variants.forEach((v, i) => {
-      const sellingPrice = calculateSellingPrice(v.price);
-      text += `*${i + 1}.* ${v.variant_name}\n    💰 ${formatRupiah(sellingPrice)}\n`;
-    });
-    text += '\nBalas dengan *nomor* untuk memilih.';
     await randomDelay();
     await sock.sendMessage(jid, { text });
+  } catch (err) {
+    logger.error('Failed to send variant list:', err.message);
   }
 
   userStates.set(jid, {
@@ -371,7 +171,7 @@ async function sendVariantList(sock, jid, category, productName) {
 }
 
 /**
- * Kirim konfirmasi pembelian
+ * Kirim konfirmasi pembelian (Teks Konfirmasi)
  */
 async function sendConfirmation(sock, jid, product) {
   const sellingPrice = calculateSellingPrice(product.price);
@@ -380,25 +180,14 @@ async function sendConfirmation(sock, jid, product) {
     `🛒 *Detail Pesanan:*\n\n` +
     `📌 Produk: *${product.product_name} - ${product.variant_name}*\n` +
     `💰 Harga: *${formatRupiah(sellingPrice)}*\n\n` +
-    `Apakah sudah benar?`;
+    `Apakah pesanan sudah benar?\n\n` +
+    `👉 Balas *YA* untuk lanjut\n👉 Balas *TIDAK* untuk batal`;
 
   try {
-    await sendInteractiveButtons(sock, jid, {
-      title: 'Konfirmasi Pesanan',
-      body: confirmText,
-      footer: 'Udinz Store',
-      buttons: [
-        { text: '✅ Ya', id: 'confirm_yes' },
-        { text: '❌ Tidak', id: 'confirm_no' },
-      ],
-    });
-  } catch (err) {
-    // Fallback text
-    logger.warn('Button message failed, using text fallback:', err.message);
     await randomDelay();
-    await sock.sendMessage(jid, {
-      text: confirmText + '\n\nBalas *YA* untuk konfirmasi atau *TIDAK* untuk batal.',
-    });
+    await sock.sendMessage(jid, { text: confirmText });
+  } catch (err) {
+    logger.error('Failed to send confirmation:', err.message);
   }
 
   userStates.set(jid, {
@@ -425,13 +214,12 @@ async function processOrder(sock, jid, msg) {
   }
 
   const pushName = msg.pushName || 'Pelanggan WA';
-  const userWa = jid; // Simpan JID asli (bisa @lid atau @s.whatsapp.net)
+  const userWa = jid;
   const userPhone = jidToPhone(jid);
   const reference = generateReference();
   const sellingPrice = calculateSellingPrice(product.price);
 
   try {
-    // Buat invoice UangX
     const paymentUrl = await uangx.createInvoice(
       sellingPrice,
       pushName,
@@ -439,7 +227,6 @@ async function processOrder(sock, jid, msg) {
       reference
     );
 
-    // Simpan transaksi ke database (user_wa = full JID)
     models.createTransaction({
       user_wa: userWa,
       reference,
@@ -450,7 +237,6 @@ async function processOrder(sock, jid, msg) {
       payment_url: paymentUrl,
     });
 
-    // Kirim link pembayaran ke pelanggan
     await randomDelay();
     await sock.sendMessage(jid, {
       text:
@@ -486,7 +272,6 @@ async function processOrder(sock, jid, msg) {
  * Handler utama untuk setiap pesan masuk
  */
 async function handleMessage(sock, msg) {
-  // Tandai pesan sudah dibaca (mencegah pemblokiran)
   try {
     await sock.readMessages([msg.key]);
   } catch (err) {
@@ -515,19 +300,14 @@ async function handleMessage(sock, msg) {
     const categories = userState.data.categories;
     let selectedCategory = null;
 
-    // Dari interactive response: cat_{nama}
     if (text.startsWith('cat_')) {
       selectedCategory = text.replace('cat_', '');
-    }
-    // Dari text biasa: nomor
-    else if (/^\d+$/.test(text)) {
+    } else if (/^\d+$/.test(text)) {
       const idx = parseInt(text) - 1;
       if (idx >= 0 && idx < categories.length) {
         selectedCategory = categories[idx];
       }
-    }
-    // Dari text biasa: nama kategori (case-insensitive)
-    else {
+    } else {
       selectedCategory = categories.find(c => c.toLowerCase() === text.toLowerCase());
     }
 
@@ -535,30 +315,25 @@ async function handleMessage(sock, msg) {
       return sendProductList(sock, jid, selectedCategory);
     } else {
       await randomDelay();
-      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
+      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dengan angka atau ketik !menu' });
       return;
     }
   }
 
   // ─── STATE: SELECTING_PRODUCT ───
   if (currentState === 'SELECTING_PRODUCT') {
-    const products = userState.data.products; // array of strings (product_name)
+    const products = userState.data.products;
     const category = userState.data.category;
     let selectedProductName = null;
 
-    // Dari interactive response: prod_{nama}
     if (text.startsWith('prod_')) {
       selectedProductName = text.replace('prod_', '');
-    }
-    // Dari text biasa: nomor
-    else if (/^\d+$/.test(text)) {
+    } else if (/^\d+$/.test(text)) {
       const idx = parseInt(text) - 1;
       if (idx >= 0 && idx < products.length) {
         selectedProductName = products[idx];
       }
-    }
-    // Dari text biasa: nama produk
-    else {
+    } else {
       selectedProductName = products.find(p => p.toLowerCase() === text.toLowerCase());
     }
 
@@ -566,7 +341,7 @@ async function handleMessage(sock, msg) {
       return sendVariantList(sock, jid, category, selectedProductName);
     } else {
       await randomDelay();
-      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
+      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dengan angka atau ketik !menu' });
       return;
     }
   }
@@ -576,13 +351,10 @@ async function handleMessage(sock, msg) {
     const variants = userState.data.variants;
     let selectedVariant = null;
 
-    // Dari interactive response: var_{variant_id}
     if (text.startsWith('var_')) {
       const variantId = parseInt(text.replace('var_', ''));
       selectedVariant = variants.find(v => v.variant_id === variantId);
-    }
-    // Dari text biasa: nomor
-    else if (/^\d+$/.test(text)) {
+    } else if (/^\d+$/.test(text)) {
       const idx = parseInt(text) - 1;
       if (idx >= 0 && idx < variants.length) {
         selectedVariant = variants[idx];
@@ -593,7 +365,7 @@ async function handleMessage(sock, msg) {
       return sendConfirmation(sock, jid, selectedVariant);
     } else {
       await randomDelay();
-      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
+      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dengan angka atau ketik !menu' });
       return;
     }
   }
