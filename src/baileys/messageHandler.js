@@ -2,9 +2,9 @@
  * Message Handler – State Machine per User
  *
  * States:
- *   MENU               → tampilkan daftar kategori
- *   SELECTING_CATEGORY  → menunggu pilih kategori
+ *   MENU               → tampilkan daftar produk
  *   SELECTING_PRODUCT   → menunggu pilih produk
+ *   SELECTING_VARIANT   → menunggu pilih varian
  *   CONFIRMING          → menunggu konfirmasi Ya/Tidak
  *   WAITING_PAYMENT     → link sudah dikirim, reset state
  */
@@ -219,12 +219,12 @@ function extractMessageContent(msg) {
 // ═══════════════════════════════════════════════════
 
 /**
- * Kirim menu utama (list message kategori)
+ * Kirim menu utama (list message produk)
  */
 async function sendMainMenu(sock, jid) {
-  const categories = models.getCategories();
+  const products = models.getAllUniqueProducts();
 
-  if (categories.length === 0) {
+  if (products.length === 0) {
     try {
       await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Maaf, belum ada produk tersedia saat ini. Silakan coba lagi nanti.' });
@@ -233,58 +233,9 @@ async function sendMainMenu(sock, jid) {
   }
 
   const sections = [{
-    title: '📋 Kategori Produk',
-    rows: categories.map(cat => ({
-      header: cat.category,
-      title: cat.category,
-      id: `cat_${cat.category}`,
-      description: '',
-    })),
-  }];
-
-  try {
-    await sendListMessage(sock, jid, {
-      title: 'Menu Utama',
-      body: '🎉 *Selamat datang di Udinz Store!*\nSilakan pilih layanan yang ingin kamu beli:',
-      footer: '📞 Hubungi Admin: wa.me/' + ADMIN_PHONE,
-      buttonText: 'Pilih Layanan',
-      sections,
-    });
-  } catch (err) {
-    // Fallback: kirim sebagai text biasa jika interactive message gagal
-    logger.warn('List message failed, using text fallback:', err.message);
-    let text = '🎉 *Selamat datang di Udinz Store!*\n\nSilakan pilih layanan:\n\n';
-    categories.forEach((cat, i) => {
-      text += `*${i + 1}.* ${cat.category}\n`;
-    });
-    text += `\nBalas dengan *nomor* untuk memilih.\n📞 Hubungi Admin: wa.me/${ADMIN_PHONE}`;
-    await randomDelay();
-    await sock.sendMessage(jid, { text });
-  }
-
-  userStates.set(jid, {
-    state: 'SELECTING_CATEGORY',
-    data: { categories: categories.map(c => c.category) },
-  });
-}
-
-/**
- * Kirim daftar produk (nama produk unik) per kategori
- */
-async function sendProductList(sock, jid, category) {
-  const products = models.getUniqueProductsByCategory(category);
-
-  if (products.length === 0) {
-    await sock.sendMessage(jid, {
-      text: '⚠️ Maaf, produk untuk kategori ini sedang kosong.',
-    });
-    return sendMainMenu(sock, jid);
-  }
-
-  const sections = [{
-    title: `📦 Produk ${category}`,
+    title: '📦 Daftar Produk',
     rows: products.map(productName => ({
-      header: category,
+      header: 'Produk Premium',
       title: productName,
       id: `prod_${productName}`,
       description: '',
@@ -293,41 +244,43 @@ async function sendProductList(sock, jid, category) {
 
   try {
     await sendListMessage(sock, jid, {
-      title: `Produk ${category}`,
-      body: `📦 *Produk ${category}*\nPilih produk yang ingin kamu beli:`,
-      footer: 'Udinz Store',
+      title: 'Menu Utama',
+      body: '🎉 *Selamat datang di Udinz Store!*\nSilakan pilih produk yang ingin kamu beli:',
+      footer: '📞 Hubungi Admin: wa.me/' + ADMIN_PHONE,
       buttonText: 'Pilih Produk',
       sections,
     });
   } catch (err) {
-    // Fallback text
+    // Fallback: kirim sebagai text biasa jika interactive message gagal
     logger.warn('List message failed, using text fallback:', err.message);
-    let text = `📦 *Produk ${category}*\n\n`;
+    let text = '🎉 *Selamat datang di Udinz Store!*\n\nSilakan pilih produk:\n\n';
     products.forEach((p, i) => {
       text += `*${i + 1}.* ${p}\n`;
     });
-    text += '\nBalas dengan *nomor* untuk memilih.';
+    text += `\nBalas dengan *nomor* untuk memilih.\n📞 Hubungi Admin: wa.me/${ADMIN_PHONE}`;
     await randomDelay();
     await sock.sendMessage(jid, { text });
   }
 
   userStates.set(jid, {
     state: 'SELECTING_PRODUCT',
-    data: { category, products },
+    data: { products },
   });
 }
+
+
 
 /**
  * Kirim daftar variant per produk
  */
-async function sendVariantList(sock, jid, category, productName) {
-  const variants = models.getVariantsByProduct(category, productName);
+async function sendVariantList(sock, jid, productName) {
+  const variants = models.getVariantsByProductName(productName);
 
   if (variants.length === 0) {
     await sock.sendMessage(jid, {
       text: '⚠️ Maaf, varian untuk produk ini sedang kosong.',
     });
-    return sendProductList(sock, jid, category);
+    return sendMainMenu(sock, jid);
   }
 
   const sections = [{
@@ -366,7 +319,7 @@ async function sendVariantList(sock, jid, category, productName) {
 
   userStates.set(jid, {
     state: 'SELECTING_VARIANT',
-    data: { category, productName, variants },
+    data: { productName, variants },
   });
 }
 
@@ -510,40 +463,10 @@ async function handleMessage(sock, msg) {
     return sendMainMenu(sock, jid);
   }
 
-  // ─── STATE: SELECTING_CATEGORY ───
-  if (currentState === 'SELECTING_CATEGORY') {
-    const categories = userState.data.categories;
-    let selectedCategory = null;
-
-    // Dari interactive response: cat_{nama}
-    if (text.startsWith('cat_')) {
-      selectedCategory = text.replace('cat_', '');
-    }
-    // Dari text biasa: nomor
-    else if (/^\d+$/.test(text)) {
-      const idx = parseInt(text) - 1;
-      if (idx >= 0 && idx < categories.length) {
-        selectedCategory = categories[idx];
-      }
-    }
-    // Dari text biasa: nama kategori (case-insensitive)
-    else {
-      selectedCategory = categories.find(c => c.toLowerCase() === text.toLowerCase());
-    }
-
-    if (selectedCategory) {
-      return sendProductList(sock, jid, selectedCategory);
-    } else {
-      await randomDelay();
-      await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });
-      return;
-    }
-  }
 
   // ─── STATE: SELECTING_PRODUCT ───
   if (currentState === 'SELECTING_PRODUCT') {
     const products = userState.data.products; // array of strings (product_name)
-    const category = userState.data.category;
     let selectedProductName = null;
 
     // Dari interactive response: prod_{nama}
@@ -563,7 +486,7 @@ async function handleMessage(sock, msg) {
     }
 
     if (selectedProductName) {
-      return sendVariantList(sock, jid, category, selectedProductName);
+      return sendVariantList(sock, jid, selectedProductName);
     } else {
       await randomDelay();
       await sock.sendMessage(jid, { text: '⚠️ Pilihan tidak valid. Silakan pilih dari daftar atau ketik !menu' });

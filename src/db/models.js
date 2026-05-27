@@ -70,6 +70,20 @@ function getCategories() {
 }
 
 /**
+ * Ambil semua nama produk unik dari semua kategori (stok > 0)
+ */
+function getAllUniqueProducts() {
+  const db = getDb();
+  const result = db.exec(`
+    SELECT DISTINCT product_name
+    FROM products
+    WHERE stock > 0
+    ORDER BY product_name
+  `);
+  return resultToObjects(result).map(row => row.product_name);
+}
+
+/**
  * Ambil daftar nama produk unik berdasarkan kategori (stok > 0)
  */
 function getUniqueProductsByCategory(category) {
@@ -85,6 +99,27 @@ function getUniqueProductsByCategory(category) {
   const rows = [];
   while (stmt.step()) {
     rows.push(stmt.getAsObject().product_name);
+  }
+  stmt.free();
+  return rows;
+}
+
+/**
+ * Ambil daftar variant berdasarkan nama produk dari semua kategori (stok > 0)
+ */
+function getVariantsByProductName(productName) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT variant_id, product_name, variant_name, price, stock
+    FROM products
+    WHERE product_name = ? AND stock > 0
+    ORDER BY price
+  `);
+  stmt.bind([productName]);
+
+  const rows = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject());
   }
   stmt.free();
   return rows;
@@ -224,7 +259,9 @@ module.exports = {
   upsertManyProducts,
   getCategories,
   getUniqueProductsByCategory,
+  getAllUniqueProducts,
   getVariantsByProduct,
+  getVariantsByProductName,
   getProductById,
   // Transactions
   createTransaction,

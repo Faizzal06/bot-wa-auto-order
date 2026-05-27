@@ -7,11 +7,23 @@ const makeWASocket = require('@whiskeysockets/baileys').default;
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
+const readline = require('readline');
 const logger = require('../utils/logger');
 const { randomDelay } = require('../utils/helpers');
 const { handleMessage } = require('./messageHandler');
 
 let sock = null;
+
+// Konfigurasi Pairing Code
+const usePairingCode = process.argv.includes('--use-pairing-code') || process.env.USE_PAIRING_CODE === 'true';
+
+const question = (text) => {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => rl.question(text, (answer) => {
+    rl.close();
+    resolve(answer);
+  }));
+};
 
 /**
  * Inisialisasi dan koneksi ke WhatsApp
@@ -24,20 +36,40 @@ async function startBot() {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Bot Akun Sharing', 'Chrome', '120.0.0'],
+    browser: usePairingCode ? ['Chrome (Windows)', '', ''] : ['Bot Akun Sharing', 'Chrome', '120.0.0'],
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
     keepAliveIntervalMs: 25000,
     markOnlineOnConnect: true,
   });
 
+  if (usePairingCode && !sock.authState.creds.registered) {
+    setTimeout(async () => {
+      let phoneNumber = process.env.PAIRING_NUMBER;
+      if (!phoneNumber) {
+        phoneNumber = await question('Masukkan nomor WhatsApp untuk bot (contoh: 6281234567890): ');
+      }
+      phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
+      
+      try {
+        const code = await sock.requestPairingCode(phoneNumber);
+        logger.info(`✅ KODE PAIRING ANDA: ${code}`);
+        logger.info('Silakan masukkan kode di atas pada aplikasi WhatsApp Anda (Perangkat Tautkan -> Tautkan dengan nomor telepon).');
+      } catch (err) {
+        logger.error('Gagal mendapatkan kode pairing:', err.message);
+      }
+    }, 3000);
+  }
+
   // Connection updates
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    if (qr) {
+    if (qr && !usePairingCode) {
       logger.info('QR Code tersedia, silakan scan:');
       qrcodeTerminal.generate(qr, { small: true });
+    } else if (qr && usePairingCode) {
+      logger.debug('QR Code diabaikan karena menggunakan Pairing Code.');
     }
 
     if (connection === 'close') {
