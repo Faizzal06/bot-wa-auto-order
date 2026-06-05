@@ -37,7 +37,8 @@ function sleep(ms) {
  * @returns {string}
  */
 function jidToPhone(jid) {
-  return jid?.replace(/@s\.whatsapp\.net$/, '') || '';
+  if (!jid) return '';
+  return jid.split('@')[0].split(':')[0];
 }
 
 /**

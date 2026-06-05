@@ -4,7 +4,7 @@
  */
 
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
 const readline = require('readline');
@@ -36,7 +36,7 @@ async function startBot() {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: usePairingCode ? ['Chrome (Windows)', '', ''] : ['Bot Akun Sharing', 'Chrome', '120.0.0'],
+    browser: usePairingCode ? Browsers.ubuntu('Chrome') : ['Bot Akun Sharing', 'Chrome', '120.0.0'],
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
     keepAliveIntervalMs: 25000,

@@ -30,6 +30,15 @@ function upsertProduct({ variant_id, category, product_name, variant_name, price
 }
 
 /**
+ * Set markup dinamis untuk suatu produk
+ */
+function setProductMarkup(variantId, markupValue) {
+  const db = getDb();
+  db.run(`UPDATE products SET markup = ?, updated_at = datetime('now') WHERE variant_id = ?`, [markupValue, variantId]);
+  saveDatabase();
+}
+
+/**
  * Upsert banyak produk sekaligus
  */
 function upsertManyProducts(products) {
@@ -110,7 +119,7 @@ function getUniqueProductsByCategory(category) {
 function getVariantsByProductName(productName) {
   const db = getDb();
   const stmt = db.prepare(`
-    SELECT variant_id, product_name, variant_name, price, stock
+    SELECT variant_id, product_name, variant_name, price, markup, stock
     FROM products
     WHERE product_name = ? AND stock > 0
     ORDER BY price
@@ -131,7 +140,7 @@ function getVariantsByProductName(productName) {
 function getVariantsByProduct(category, productName) {
   const db = getDb();
   const stmt = db.prepare(`
-    SELECT variant_id, product_name, variant_name, price, stock
+    SELECT variant_id, product_name, variant_name, price, markup, stock
     FROM products
     WHERE category = ? AND product_name = ? AND stock > 0
     ORDER BY price
@@ -263,6 +272,7 @@ module.exports = {
   getVariantsByProduct,
   getVariantsByProductName,
   getProductById,
+  setProductMarkup,
   // Transactions
   createTransaction,
   getTransactionByReference,

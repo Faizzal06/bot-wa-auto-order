@@ -31,6 +31,14 @@ function calculateSellingPrice(basePrice) {
   }
 }
 
+function getFinalSellingPrice(product) {
+  if (product && product.markup !== null && product.markup !== undefined) {
+    return Number(product.price) + Number(product.markup);
+  }
+  return calculateSellingPrice(product ? product.price : 0);
+}
+
 module.exports = {
   calculateSellingPrice,
+  getFinalSellingPrice,
 };

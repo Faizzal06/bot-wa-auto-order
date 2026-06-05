@@ -42,6 +42,7 @@ async function initDatabase() {
       product_name  TEXT NOT NULL,
       variant_name  TEXT NOT NULL,
       price         INTEGER NOT NULL,
+      markup        INTEGER DEFAULT NULL,
       stock         INTEGER DEFAULT 0,
       sekalipay_raw TEXT,
       updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -84,6 +85,20 @@ async function initDatabase() {
     }
   } catch (err) {
     logger.warn('Error during migration for original_price:', err.message);
+  }
+
+  // Migration: Add markup column to products if not exists
+  try {
+    const columnsInfo = db.exec("PRAGMA table_info(products)");
+    if (columnsInfo && columnsInfo.length > 0) {
+      const columns = columnsInfo[0].values.map(v => v[1]);
+      if (!columns.includes('markup')) {
+        db.run("ALTER TABLE products ADD COLUMN markup INTEGER DEFAULT NULL");
+        logger.info('Migration: added markup column to products');
+      }
+    }
+  } catch (err) {
+    logger.warn('Error during migration for markup:', err.message);
   }
 
   saveDatabase();
