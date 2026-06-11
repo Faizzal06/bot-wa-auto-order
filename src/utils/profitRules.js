@@ -17,17 +17,17 @@ function calculateSellingPrice(basePrice) {
   if (price < 500) {
     return 2000;
   } else if (price >= 500 && price < 1000) {
-    return 3000;
+    return price + 2100;
   } else if (price >= 1000 && price < 3000) {
-    return 5000;
+    return price + 2400;
   } else if (price >= 3000 && price < 5000) {
-    return 8000;
+    return price + 2800;
   } else if (price >= 5000 && price < 10000) {
-    return 12000;
+    return price + 3000;
   } else if (price >= 10000 && price < 20000) {
-    return 25000;
+    return price + 3500;
   } else {
-    return price + 10000;
+    return price + 5000;
   }
 }
 
